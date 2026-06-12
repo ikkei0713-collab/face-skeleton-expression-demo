@@ -233,8 +233,8 @@ export default {
 
   async onFrame(api) {
     apiRef = api;
-    // 映像が未準備（カメラ切替直後など）は検出せずスキップ（ハング防止）
-    if (!api.video.videoWidth || api.video.readyState < 2) { api.clear(); return; }
+    // 映像が未準備（カメラ切替直後など）は検出せずスキップ
+    if (!api.video.videoWidth) { api.clear(); return; }
     let detections = [];
     try {
       detections = await faceapi

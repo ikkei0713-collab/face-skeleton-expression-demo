@@ -158,22 +158,25 @@ function buildTabs() {
 }
 
 // ---- 描画ループ ----
-async function loop() {
+// ループは await しない（onFrameの宙吊りでrAFチェーンが止まらないように）。
+// onFrameは投げっぱなしで、frameBusyで多重実行を防止。固着はウォッチドッグで復帰。
+function loop() {
   if (!running) return;
   if (canvas.width !== video.videoWidth && video.videoWidth) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
   }
-  // ウォッチドッグ: 検出awaitが宙吊り（カメラ切替等）でも3秒で復帰
+  // ウォッチドッグ: 検出が宙吊り（カメラ切替等）でも3秒でリセットして再開
   if (frameBusy && performance.now() - frameBusyAt > 3000) frameBusy = false;
 
   if (active && active.mode === "continuous" && active.onFrame && !frameBusy) {
     frameBusy = true;
     frameBusyAt = performance.now();
-    // selfClear モードは検出後に自前でクリア（非同期検出中の点滅を防ぐ）
     if (!active.selfClear) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    try { await active.onFrame(api); } catch (e) { console.warn("frame", e); }
-    frameBusy = false;
+    Promise.resolve()
+      .then(() => active.onFrame(api))
+      .catch((e) => console.warn("frame", e))
+      .finally(() => { frameBusy = false; });
   }
   requestAnimationFrame(loop);
 }
