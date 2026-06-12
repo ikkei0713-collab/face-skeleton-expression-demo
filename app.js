@@ -28,6 +28,8 @@ const MODE_DEFS = [
   { id: "qr", icon: "🔳", label: "QR", loader: () => import("./modes/qr.js") },
   { id: "ocr", icon: "🔤", label: "文字", loader: () => import("./modes/ocr.js") },
   { id: "detect", icon: "📦", label: "物体", loader: () => import("./modes/detect.js") },
+  { id: "card", icon: "📇", label: "名刺", loader: () => import("./modes/card.js") },
+  { id: "color", icon: "🎨", label: "カラー", loader: () => import("./modes/color.js") },
 ];
 const moduleCache = {};
 

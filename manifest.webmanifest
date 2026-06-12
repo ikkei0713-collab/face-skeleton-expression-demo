@@ -1,7 +1,7 @@
 {
-  "name": "顔認証デモ",
-  "short_name": "顔認証",
-  "description": "ブラウザ完結の顔認証（誰かを判定・登録）デモ",
+  "name": "Vizor",
+  "short_name": "Vizor",
+  "description": "Vizor — 顔・QR・文字・物体・名刺・色を認識する汎用ビジョンアプリ",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0b0f1a",
