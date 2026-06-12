@@ -5,11 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="顔骨格" />
+  <meta name="apple-mobile-web-app-title" content="顔認証" />
   <meta name="theme-color" content="#0b0f1a" />
-  <title>顔骨格 × 表情判定デモ</title>
+  <title>顔認証デモ</title>
   <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="stylesheet" href="./style.css" />
@@ -17,7 +16,7 @@
 <body>
   <div id="app">
     <header id="topbar">
-      <h1>顔骨格 × 表情判定</h1>
+      <h1>顔認証</h1>
       <span id="status" class="status">モデル読み込み中…</span>
     </header>
 
@@ -32,22 +31,60 @@
     </div>
 
     <div id="panel">
-      <div id="expression">
-        <div class="emoji" id="emoji">🙂</div>
-        <div class="label" id="exprLabel">表情を判定中…</div>
+      <div id="result" class="result">
+        <div class="result-empty">顔を映してください…</div>
       </div>
-      <div id="bars"></div>
+
       <div id="controls">
-        <label class="toggle"><input type="checkbox" id="toggleMesh" checked /> メッシュ</label>
-        <label class="toggle"><input type="checkbox" id="toggleContours" checked /> 輪郭・目・口</label>
-        <label class="toggle"><input type="checkbox" id="togglePoints" /> 全点表示</label>
-        <label class="toggle"><input type="checkbox" id="toggleMirror" checked /> 左右反転</label>
+        <button id="switchCamBtn" class="ctrl-btn">📷 カメラ切替</button>
+        <button id="registerBtn" class="ctrl-btn" disabled>＋ この人を登録</button>
+        <label class="toggle"><input type="checkbox" id="toggleSkeleton" /> 骨格表示</label>
+      </div>
+
+      <div id="dbInfo" class="db-info">
+        <span id="dbCount">登録: 0人</span>
+        <button id="manageBtn" class="link-btn">登録一覧</button>
       </div>
       <div id="fps" class="fps"></div>
     </div>
   </div>
 
-  <!-- 監視スクリプト（非module: モジュール読込が失敗しても必ず動く）-->
+  <!-- 登録モーダル -->
+  <div id="registerModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>人物を登録</h2>
+      <div class="modal-preview"><canvas id="regPreview" width="120" height="120"></canvas></div>
+      <label class="field">
+        <span>氏名</span>
+        <input id="regName" type="text" placeholder="例: 山田 太郎" />
+      </label>
+      <label class="field">
+        <span>性別</span>
+        <select id="regGender">
+          <option value="男性">男性</option>
+          <option value="女性">女性</option>
+          <option value="その他">その他</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button id="regCancel" class="ctrl-btn ghost">キャンセル</button>
+        <button id="regSave" class="ctrl-btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 登録一覧モーダル -->
+  <div id="manageModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>登録一覧</h2>
+      <div id="manageList" class="manage-list"></div>
+      <div class="modal-actions">
+        <button id="manageClose" class="ctrl-btn ghost">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 監視スクリプト（非module: 読込失敗時も必ず動く）-->
   <script>
     (function () {
       var statusEl = document.getElementById("status");
@@ -56,26 +93,20 @@
         if (statusEl) { statusEl.textContent = "エラー"; statusEl.className = "status error"; }
         if (hintEl) { hintEl.textContent = "エラー: " + msg; }
       }
-      // 実行時エラーを画面に出す
-      window.addEventListener("error", function (e) {
-        showError((e && e.message ? e.message : "不明なエラー"));
-      });
+      window.addEventListener("error", function (e) { showError(e && e.message ? e.message : "不明なエラー"); });
       window.addEventListener("unhandledrejection", function (e) {
-        var r = e && e.reason;
-        showError((r && r.message ? r.message : String(r)));
+        var r = e && e.reason; showError(r && r.message ? r.message : String(r));
       });
-      // ウォッチドッグ: 一定時間内に準備完了もエラーも出なければ通知
-      var WATCH_MS = 20000;
       setTimeout(function () {
         if (window.__APP_READY || window.__APP_ERROR) return;
         if (!window.__APP_MODULE_LOADED) {
-          showError("スクリプトを読み込めませんでした。通信環境を変えて再読み込みしてください。");
-        } else if (statusEl && /読み込み中|取得中|WASM/.test(statusEl.textContent)) {
-          if (hintEl) hintEl.textContent = "読み込みに時間がかかっています…（初回は数MBのモデル取得があります）電波の良い場所で再読み込みしてください。";
+          showError("スクリプトを読み込めませんでした。再読み込みしてください。");
+        } else if (hintEl && statusEl && /読み込み|取得/.test(statusEl.textContent)) {
+          hintEl.textContent = "読み込みに時間がかかっています…（初回はモデル取得があります）電波の良い場所で再読み込みしてください。";
         }
-      }, WATCH_MS);
+      }, 25000);
     })();
   </script>
-  <script type="module" src="./app.js?v=2"></script>
+  <script type="module" src="./app.js?v=3"></script>
 </body>
 </html>

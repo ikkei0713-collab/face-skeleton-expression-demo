@@ -1,9 +1,5 @@
-import {
-  FaceLandmarker,
-  FilesetResolver,
-} from "./vendor/vision_bundle.mjs";
+import * as faceapi from "./vendor/face-api.esm.js";
 
-// モジュールが実行開始したことをHTML側のウォッチドッグに通知
 window.__APP_MODULE_LOADED = true;
 
 // ---- DOM ----
@@ -13,125 +9,150 @@ const ctx = canvas.getContext("2d");
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("startBtn");
 const startScreen = document.getElementById("startScreen");
-const emojiEl = document.getElementById("emoji");
-const exprLabel = document.getElementById("exprLabel");
-const barsEl = document.getElementById("bars");
+const resultEl = document.getElementById("result");
 const fpsEl = document.getElementById("fps");
-const stage = document.getElementById("stage");
+const switchCamBtn = document.getElementById("switchCamBtn");
+const registerBtn = document.getElementById("registerBtn");
+const toggleSkeleton = document.getElementById("toggleSkeleton");
+const dbCountEl = document.getElementById("dbCount");
+const manageBtn = document.getElementById("manageBtn");
 
-const toggleMesh = document.getElementById("toggleMesh");
-const toggleContours = document.getElementById("toggleContours");
-const togglePoints = document.getElementById("togglePoints");
-const toggleMirror = document.getElementById("toggleMirror");
+const registerModal = document.getElementById("registerModal");
+const regName = document.getElementById("regName");
+const regGender = document.getElementById("regGender");
+const regSave = document.getElementById("regSave");
+const regCancel = document.getElementById("regCancel");
+const regPreview = document.getElementById("regPreview");
+const manageModal = document.getElementById("manageModal");
+const manageList = document.getElementById("manageList");
+const manageClose = document.getElementById("manageClose");
 
-let faceLandmarker = null;
+const MODELS = "./models";
+const MATCH_THRESHOLD = 0.55; // これ未満の距離なら同一人物とみなす
+const DB_KEY = "faces_db_v1";
+
 let running = false;
-let lastVideoTime = -1;
+let facingMode = "user"; // user=内カメラ / environment=外カメラ
+let currentStream = null;
 let lastFrameAt = 0;
+let detectOptions = null;
+
+// 直近の「未登録の主役顔」を登録用に保持
+let pendingFace = null; // { descriptor:Float32Array, gender:string }
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = "status" + (kind ? " " + kind : "");
-  // HTML側ウォッチドッグへ状態を通知
   if (kind === "ready") window.__APP_READY = true;
   if (kind === "error") window.__APP_ERROR = text;
 }
-
-function applyMirror() {
-  const t = toggleMirror.checked ? "scaleX(-1)" : "scaleX(1)";
-  video.style.transform = t;
-  canvas.style.transform = t;
-}
-toggleMirror.addEventListener("change", applyMirror);
-
-// ---- モデル読み込み（全てローカル自己ホスト：CDN/通信ブロックの影響を受けない）----
-const WASM_PATH = "./vendor/wasm";
-const MODEL_PATH = "./models/face_landmarker.task";
-
 function showHint(text) {
-  const hint = startScreen.querySelector(".hint");
-  if (hint) hint.textContent = text;
+  const h = startScreen.querySelector(".hint");
+  if (h) h.textContent = text;
 }
 
-// 一定時間で解決しない場合に reject させる（GPUハング対策）
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} がタイムアウト(${ms}ms)`)), ms)
-    ),
-  ]);
+// ---- 登録DB（localStorage）----
+function loadDB() {
+  try {
+    const raw = localStorage.getItem(DB_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw).map((p) => ({ ...p, descriptor: Float32Array.from(p.descriptor) }));
+  } catch {
+    return [];
+  }
+}
+function saveDB(db) {
+  const ser = db.map((p) => ({ ...p, descriptor: Array.from(p.descriptor) }));
+  localStorage.setItem(DB_KEY, JSON.stringify(ser));
+}
+let db = [];
+function refreshDbCount() {
+  dbCountEl.textContent = `登録: ${db.length}人`;
 }
 
-async function createLandmarker(filesetResolver, delegate) {
-  return FaceLandmarker.createFromOptions(filesetResolver, {
-    baseOptions: { modelAssetPath: MODEL_PATH, delegate },
-    outputFaceBlendshapes: true,
-    runningMode: "VIDEO",
-    numFaces: 1,
-  });
-}
-
+// ---- モデル読み込み ----
 async function initModel() {
   try {
-    setStatus("WASM取得中…");
+    setStatus("モデル読み込み中…");
     showHint("初回はモデルの読み込みに数秒かかります…");
-    const filesetResolver = await FilesetResolver.forVisionTasks(WASM_PATH);
-
-    setStatus("モデル取得中(GPU)…");
-    try {
-      // GPU は iOS Safari でハングすることがあるため、タイムアウトで打ち切って CPU に切替
-      faceLandmarker = await withTimeout(
-        createLandmarker(filesetResolver, "GPU"),
-        8000,
-        "GPU初期化"
-      );
-    } catch (gpuErr) {
-      console.warn("GPU初期化に失敗/タイムアウト。CPUで再試行します:", gpuErr);
-      setStatus("モデル取得中(CPU)…");
-      faceLandmarker = await createLandmarker(filesetResolver, "CPU");
-    }
-
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS);
+    await faceapi.nets.faceLandmark68Net.loadFromUri(MODELS);
+    await faceapi.nets.faceRecognitionNet.loadFromUri(MODELS);
+    await faceapi.nets.ageGenderNet.loadFromUri(MODELS);
+    detectOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 256, scoreThreshold: 0.5 });
+    db = loadDB();
+    refreshDbCount();
     setStatus("準備完了", "ready");
     showHint("「カメラを起動」を押してください。カメラの許可が出たら「許可」を選択。");
     startBtn.disabled = false;
   } catch (e) {
     console.error(e);
     setStatus("読み込み失敗", "error");
-    showHint("読み込みに失敗しました: " + (e && e.message ? e.message : e) + "\nページを再読み込みしてください。");
+    showHint("読み込み失敗: " + (e && e.message ? e.message : e) + "\n再読み込みしてください。");
   }
 }
 
-// ---- カメラ起動 ----
+// ---- カメラ ----
+function applyMirror() {
+  const t = facingMode === "user" ? "scaleX(-1)" : "scaleX(1)";
+  video.style.transform = t;
+  canvas.style.transform = t;
+}
+
 async function startCamera() {
   try {
     startBtn.disabled = true;
     setStatus("カメラ起動中…");
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } },
+    if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
+    currentStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 960 } },
       audio: false,
     });
-    video.srcObject = stream;
+    video.srcObject = currentStream;
     await video.play();
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     startScreen.style.display = "none";
-    setStatus("検出中", "ready");
-    running = true;
     applyMirror();
-    requestAnimationFrame(renderLoop);
+    setStatus("認証中", "ready");
+    if (!running) {
+      running = true;
+      detectLoop();
+    }
   } catch (e) {
     console.error(e);
     setStatus("カメラ起動失敗", "error");
     startBtn.disabled = false;
-    startScreen.querySelector(".hint").textContent =
-      "カメラへのアクセスが拒否されました。Safariの設定からカメラを許可してください。";
+    showHint("カメラにアクセスできません。Safariの設定でカメラを許可してください。");
   }
 }
 startBtn.addEventListener("click", startCamera);
 
-// ---- 描画ループ ----
-function renderLoop() {
+switchCamBtn.addEventListener("click", async () => {
+  facingMode = facingMode === "user" ? "environment" : "user";
+  if (running) await startCamera();
+});
+
+// ---- 照合 ----
+function matchFace(descriptor) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const p of db) {
+    const d = faceapi.euclideanDistance(descriptor, p.descriptor);
+    if (d < bestDist) { bestDist = d; best = p; }
+  }
+  if (best && bestDist < MATCH_THRESHOLD) {
+    return { matched: true, person: best, dist: bestDist };
+  }
+  return { matched: false, dist: bestDist };
+}
+
+function genderJP(g) {
+  return g === "male" ? "男性" : g === "female" ? "女性" : "不明";
+}
+
+// ---- 検出ループ ----
+async function detectLoop() {
   if (!running) return;
 
   if (canvas.width !== video.videoWidth && video.videoWidth) {
@@ -139,175 +160,196 @@ function renderLoop() {
     canvas.height = video.videoHeight;
   }
 
-  const now = performance.now();
-  let result = null;
-  if (video.currentTime !== lastVideoTime) {
-    lastVideoTime = video.currentTime;
-    result = faceLandmarker.detectForVideo(video, now);
+  let detections = [];
+  try {
+    detections = await faceapi
+      .detectAllFaces(video, detectOptions)
+      .withFaceLandmarks()
+      .withAgeAndGender()
+      .withFaceDescriptors();
+  } catch (e) {
+    console.warn("detect error", e);
   }
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (result && result.faceLandmarks && result.faceLandmarks.length > 0) {
-    for (const landmarks of result.faceLandmarks) {
-      drawSkeleton(landmarks);
+  const cards = [];
+  let primaryUnknown = null;
+  let primaryArea = 0;
+
+  for (const det of detections) {
+    const box = det.detection.box;
+    const m = matchFace(det.descriptor);
+    const detectedGender = genderJP(det.gender);
+    const age = Math.round(det.age);
+
+    // オーバーレイ枠＋ラベル
+    const known = m.matched;
+    drawBox(box, known ? "#36d399" : "#ffb454");
+    const label = known ? m.person.name : "未登録";
+    drawLabel(box, label, known ? "#36d399" : "#ffb454");
+
+    // 骨格サブ機能
+    if (toggleSkeleton.checked) drawSkeleton(det.landmarks);
+
+    // 結果カード情報
+    if (known) {
+      cards.push({
+        known: true, name: m.person.name, gender: m.person.gender,
+        sub: `${detectedGender}・推定${age}歳`, conf: Math.round((1 - m.dist / MATCH_THRESHOLD) * 100),
+      });
+    } else {
+      cards.push({
+        known: false, name: "未登録の人物", gender: detectedGender,
+        sub: `推定${age}歳`, conf: 0,
+      });
+      const area = box.width * box.height;
+      if (area > primaryArea) {
+        primaryArea = area;
+        primaryUnknown = { descriptor: det.descriptor, gender: detectedGender, box };
+      }
     }
-    if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
-      updateExpression(result.faceBlendshapes[0].categories);
-    }
-  } else if (result) {
-    exprLabel.textContent = "顔が見つかりません";
-    emojiEl.textContent = "🔍";
   }
+
+  renderCards(cards);
+
+  // 未登録の主役がいれば登録ボタンを有効化
+  pendingFace = primaryUnknown;
+  registerBtn.disabled = !primaryUnknown;
 
   // FPS
-  if (lastFrameAt) {
-    const fps = 1000 / (now - lastFrameAt);
-    fpsEl.textContent = `${fps.toFixed(0)} FPS`;
-  }
+  const now = performance.now();
+  if (lastFrameAt) fpsEl.textContent = `${(1000 / (now - lastFrameAt)).toFixed(0)} FPS`;
   lastFrameAt = now;
 
-  requestAnimationFrame(renderLoop);
+  requestAnimationFrame(detectLoop);
 }
 
-// ---- 描画ヘルパー（DrawingUtilsに依存せず自前実装）----
-// connections: [{start, end}, ...] / landmarks: [{x, y}, ...]（正規化座標0..1）
-function drawConnectors(landmarks, connections, color, lineWidth) {
-  const w = canvas.width;
-  const h = canvas.height;
+// ---- 描画 ----
+function drawBox(box, color) {
   ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  for (const c of connections) {
-    const a = landmarks[c.start];
-    const b = landmarks[c.end];
-    if (!a || !b) continue;
-    ctx.moveTo(a.x * w, a.y * h);
-    ctx.lineTo(b.x * w, b.y * h);
-  }
-  ctx.stroke();
+  ctx.lineWidth = 3;
+  ctx.strokeRect(box.x, box.y, box.width, box.height);
 }
-
-function drawPoints(landmarks, fillColor, radius) {
-  const w = canvas.width;
-  const h = canvas.height;
-  ctx.fillStyle = fillColor;
-  for (const p of landmarks) {
+function drawLabel(box, text, color) {
+  ctx.font = "bold 22px -apple-system, sans-serif";
+  const padding = 6;
+  const w = ctx.measureText(text).width + padding * 2;
+  const h = 28;
+  const x = box.x;
+  const y = Math.max(0, box.y - h);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "#0b0f1a";
+  ctx.fillText(text, x + padding, y + 21);
+}
+function drawSkeleton(landmarks) {
+  const pts = landmarks.positions;
+  // 点
+  ctx.fillStyle = "rgba(79,140,255,0.9)";
+  for (const p of pts) {
     ctx.beginPath();
-    ctx.arc(p.x * w, p.y * h, radius, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, 1.6, 0, Math.PI * 2);
     ctx.fill();
   }
-}
-
-// ---- 骨格オーバーレイ描画 ----
-function drawSkeleton(landmarks) {
-  const C = FaceLandmarker;
-
-  // メッシュ（テッセレーション）
-  if (toggleMesh.checked) {
-    drawConnectors(landmarks, C.FACE_LANDMARKS_TESSELATION, "rgba(120, 180, 255, 0.30)", 1);
-  }
-
-  // 輪郭・目・眉・唇・虹彩
-  if (toggleContours.checked) {
-    drawConnectors(landmarks, C.FACE_LANDMARKS_FACE_OVAL, "#4f8cff", 3);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_EYE, "#36d399", 2);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_EYE, "#36d399", 2);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_EYEBROW, "#ffd166", 2);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_EYEBROW, "#ffd166", 2);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_LIPS, "#ff6b9d", 2);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_IRIS, "#ffffff", 2);
-    drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_IRIS, "#ffffff", 2);
-  }
-
-  // 全ランドマーク点
-  if (togglePoints.checked) {
-    drawPoints(landmarks, "rgba(79, 140, 255, 0.9)", 1.6);
-  }
-}
-
-// ---- 表情判定 ----
-function score(cats, name) {
-  const c = cats.find((x) => x.categoryName === name);
-  return c ? c.score : 0;
-}
-
-// 表示するバー（左目/右目はまとめる）
-const BAR_DEFS = [
-  { key: "smile", label: "笑顔" },
-  { key: "jawOpen", label: "口開け" },
-  { key: "blink", label: "目つむり" },
-  { key: "browUp", label: "眉上げ" },
-  { key: "pucker", label: "口すぼめ" },
-];
-
-let barEls = null;
-function ensureBars() {
-  if (barEls) return;
-  barEls = {};
-  for (const def of BAR_DEFS) {
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `<span class="bar-name">${def.label}</span><div class="bar-track"><div class="bar-fill"></div></div><span class="bar-val">0</span>`;
-    barsEl.appendChild(row);
-    barEls[def.key] = {
-      fill: row.querySelector(".bar-fill"),
-      val: row.querySelector(".bar-val"),
-    };
-  }
-}
-
-function setBar(key, v) {
-  const b = barEls[key];
-  if (!b) return;
-  const pct = Math.round(v * 100);
-  b.fill.style.width = pct + "%";
-  b.val.textContent = pct;
-}
-
-function updateExpression(cats) {
-  ensureBars();
-
-  const smile = (score(cats, "mouthSmileLeft") + score(cats, "mouthSmileRight")) / 2;
-  const jawOpen = score(cats, "jawOpen");
-  const blink = (score(cats, "eyeBlinkLeft") + score(cats, "eyeBlinkRight")) / 2;
-  const browUp = (score(cats, "browInnerUp") + score(cats, "browOuterUpLeft") + score(cats, "browOuterUpRight")) / 3;
-  const browDown = (score(cats, "browDownLeft") + score(cats, "browDownRight")) / 2;
-  const pucker = score(cats, "mouthPucker");
-  const frown = (score(cats, "mouthFrownLeft") + score(cats, "mouthFrownRight")) / 2;
-  const tongue = score(cats, "tongueOut");
-
-  setBar("smile", smile);
-  setBar("jawOpen", jawOpen);
-  setBar("blink", blink);
-  setBar("browUp", browUp);
-  setBar("pucker", pucker);
-
-  // ルールベースで最も強い表情を選ぶ
-  const candidates = [
-    { name: "ベー😛", emoji: "😛", v: tongue, th: 0.3 },
-    { name: "驚き", emoji: "😲", v: Math.min(jawOpen, browUp) * 1.6, th: 0.35 },
-    { name: "笑顔", emoji: "😄", v: smile, th: 0.4 },
-    { name: "口あんぐり", emoji: "😮", v: jawOpen, th: 0.45 },
-    { name: "口すぼめ", emoji: "😗", v: pucker, th: 0.4 },
-    { name: "怒り・しかめ面", emoji: "😠", v: browDown, th: 0.4 },
-    { name: "への字（不満）", emoji: "🙁", v: frown, th: 0.35 },
-    { name: "目を閉じる", emoji: "😑", v: blink, th: 0.5 },
+  // 主要パーツの輪郭線
+  const groups = [
+    landmarks.getJawOutline(),
+    landmarks.getLeftEyeBrow(),
+    landmarks.getRightEyeBrow(),
+    landmarks.getNose(),
+    landmarks.getLeftEye(),
+    landmarks.getRightEye(),
+    landmarks.getMouth(),
   ];
-
-  let best = null;
-  for (const c of candidates) {
-    if (c.v >= c.th && (!best || c.v > best.v)) best = c;
+  ctx.strokeStyle = "rgba(120,180,255,0.6)";
+  ctx.lineWidth = 1.5;
+  for (const g of groups) {
+    ctx.beginPath();
+    g.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.stroke();
   }
+}
 
-  if (best) {
-    emojiEl.textContent = best.emoji;
-    exprLabel.textContent = best.name;
-  } else {
-    emojiEl.textContent = "🙂";
-    exprLabel.textContent = "無表情";
+function renderCards(cards) {
+  if (cards.length === 0) {
+    resultEl.innerHTML = `<div class="result-empty">顔を映してください…</div>`;
+    return;
   }
+  resultEl.innerHTML = cards
+    .map((c) => `
+      <div class="person ${c.known ? "known" : "unknown"}">
+        <div>
+          <div class="pname">${escapeHtml(c.name)}</div>
+          <div class="pmeta">性別: ${escapeHtml(c.gender)} ／ ${escapeHtml(c.sub)}</div>
+        </div>
+        <span class="pbadge">${c.known ? "本人 " + c.conf + "%" : "未登録"}</span>
+      </div>`)
+    .join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
+// ---- 登録 ----
+registerBtn.addEventListener("click", () => {
+  if (!pendingFace) return;
+  // プレビュー（現フレームの顔を切り出し）
+  try {
+    const b = pendingFace.box;
+    const pctx = regPreview.getContext("2d");
+    pctx.clearRect(0, 0, 120, 120);
+    pctx.drawImage(video, b.x, b.y, b.width, b.height, 0, 0, 120, 120);
+  } catch {}
+  regName.value = "";
+  regGender.value = pendingFace.gender === "男性" ? "男性" : pendingFace.gender === "女性" ? "女性" : "その他";
+  registerModal.hidden = false;
+});
+regCancel.addEventListener("click", () => { registerModal.hidden = true; });
+regSave.addEventListener("click", () => {
+  if (!pendingFace) { registerModal.hidden = true; return; }
+  const name = regName.value.trim() || "名称未設定";
+  db.push({
+    id: "p_" + Date.now(),
+    name,
+    gender: regGender.value,
+    descriptor: pendingFace.descriptor,
+  });
+  saveDB(db);
+  refreshDbCount();
+  registerModal.hidden = true;
+});
+
+// ---- 登録一覧 ----
+manageBtn.addEventListener("click", () => {
+  renderManage();
+  manageModal.hidden = false;
+});
+manageClose.addEventListener("click", () => { manageModal.hidden = true; });
+function renderManage() {
+  if (db.length === 0) {
+    manageList.innerHTML = `<div class="manage-empty">まだ登録がありません</div>`;
+    return;
+  }
+  manageList.innerHTML = db
+    .map((p) => `
+      <div class="manage-row">
+        <div>
+          <div class="mname">${escapeHtml(p.name)}</div>
+          <div class="mmeta">性別: ${escapeHtml(p.gender)}</div>
+        </div>
+        <button class="del" data-id="${p.id}">削除</button>
+      </div>`)
+    .join("");
+  manageList.querySelectorAll(".del").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      db = db.filter((x) => x.id !== btn.dataset.id);
+      saveDB(db);
+      refreshDbCount();
+      renderManage();
+    });
+  });
 }
 
 // ---- 起動 ----
