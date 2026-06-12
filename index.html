@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b0f1a" />
+  <title>顔骨格 × 表情判定デモ</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <h1>顔骨格 × 表情判定</h1>
+      <span id="status" class="status">モデル読み込み中…</span>
+    </header>
+
+    <div id="stage">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+
+      <div id="startScreen" class="overlay-screen">
+        <button id="startBtn" disabled>カメラを起動</button>
+        <p class="hint">iPhone の Safari で開いてください。<br />カメラの許可を求められたら「許可」を選択。</p>
+      </div>
+    </div>
+
+    <div id="panel">
+      <div id="expression">
+        <div class="emoji" id="emoji">🙂</div>
+        <div class="label" id="exprLabel">表情を判定中…</div>
+      </div>
+      <div id="bars"></div>
+      <div id="controls">
+        <label class="toggle"><input type="checkbox" id="toggleMesh" checked /> メッシュ</label>
+        <label class="toggle"><input type="checkbox" id="toggleContours" checked /> 輪郭・目・口</label>
+        <label class="toggle"><input type="checkbox" id="togglePoints" /> 全点表示</label>
+        <label class="toggle"><input type="checkbox" id="toggleMirror" checked /> 左右反転</label>
+      </div>
+      <div id="fps" class="fps"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
