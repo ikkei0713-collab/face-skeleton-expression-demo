@@ -47,6 +47,35 @@
     </div>
   </div>
 
+  <!-- 監視スクリプト（非module: モジュール読込が失敗しても必ず動く）-->
+  <script>
+    (function () {
+      var statusEl = document.getElementById("status");
+      var hintEl = document.querySelector("#startScreen .hint");
+      function showError(msg) {
+        if (statusEl) { statusEl.textContent = "エラー"; statusEl.className = "status error"; }
+        if (hintEl) { hintEl.textContent = "エラー: " + msg; }
+      }
+      // 実行時エラーを画面に出す
+      window.addEventListener("error", function (e) {
+        showError((e && e.message ? e.message : "不明なエラー"));
+      });
+      window.addEventListener("unhandledrejection", function (e) {
+        var r = e && e.reason;
+        showError((r && r.message ? r.message : String(r)));
+      });
+      // ウォッチドッグ: 一定時間内に準備完了もエラーも出なければ通知
+      var WATCH_MS = 20000;
+      setTimeout(function () {
+        if (window.__APP_READY || window.__APP_ERROR) return;
+        if (!window.__APP_MODULE_LOADED) {
+          showError("スクリプトを読み込めませんでした。通信環境を変えて再読み込みしてください。");
+        } else if (statusEl && /読み込み中|取得中|WASM/.test(statusEl.textContent)) {
+          if (hintEl) hintEl.textContent = "読み込みに時間がかかっています…（初回は数MBのモデル取得があります）電波の良い場所で再読み込みしてください。";
+        }
+      }, WATCH_MS);
+    })();
+  </script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

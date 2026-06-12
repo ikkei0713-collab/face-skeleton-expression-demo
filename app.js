@@ -2,7 +2,10 @@ import {
   FaceLandmarker,
   FilesetResolver,
   DrawingUtils,
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20";
+} from "./vendor/vision_bundle.mjs";
+
+// モジュールが実行開始したことをHTML側のウォッチドッグに通知
+window.__APP_MODULE_LOADED = true;
 
 // ---- DOM ----
 const video = document.getElementById("video");
@@ -31,6 +34,9 @@ let lastFrameAt = 0;
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = "status" + (kind ? " " + kind : "");
+  // HTML側ウォッチドッグへ状態を通知
+  if (kind === "ready") window.__APP_READY = true;
+  if (kind === "error") window.__APP_ERROR = text;
 }
 
 function applyMirror() {
@@ -40,10 +46,9 @@ function applyMirror() {
 }
 toggleMirror.addEventListener("change", applyMirror);
 
-// ---- モデル読み込み ----
-const WASM_PATH = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm";
-const MODEL_PATH =
-  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+// ---- モデル読み込み（全てローカル自己ホスト：CDN/通信ブロックの影響を受けない）----
+const WASM_PATH = "./vendor/wasm";
+const MODEL_PATH = "./models/face_landmarker.task";
 
 function showHint(text) {
   const hint = startScreen.querySelector(".hint");
