@@ -15,6 +15,7 @@ const switchCamBtn = document.getElementById("switchCamBtn");
 const registerBtn = document.getElementById("registerBtn");
 const toggleSkeleton = document.getElementById("toggleSkeleton");
 const toggleExpression = document.getElementById("toggleExpression");
+const toggleHand = document.getElementById("toggleHand");
 const dbCountEl = document.getElementById("dbCount");
 const manageBtn = document.getElementById("manageBtn");
 
@@ -257,6 +258,23 @@ async function detectLoop() {
   pendingFace = primaryUnknown;
   registerBtn.disabled = !primaryUnknown;
 
+  // 手検出
+  if (toggleHand.checked && handLandmarker) {
+    try {
+      const res = handLandmarker.detectForVideo(video, performance.now());
+      if (res && res.landmarks) {
+        for (let i = 0; i < res.landmarks.length; i++) {
+          const lm = res.landmarks[i];
+          drawHand(lm);
+          const g = classifyGesture(lm);
+          drawHandGesture(lm, g);
+        }
+      }
+    } catch (e) {
+      console.warn("hand detect error", e);
+    }
+  }
+
   // FPS
   const now = performance.now();
   if (lastFrameAt) fpsEl.textContent = `${(1000 / (now - lastFrameAt)).toFixed(0)} FPS`;
@@ -403,6 +421,132 @@ function renderManage() {
       renderManage();
     });
   });
+}
+
+// ---- 手の認識（MediaPipe Hand Landmarker）----
+let handLandmarker = null;
+let handLoading = false;
+
+async function ensureHands() {
+  if (handLandmarker || handLoading) return;
+  handLoading = true;
+  try {
+    const mp = await import("./vendor/mediapipe/vision_bundle.mjs");
+    const fileset = await mp.FilesetResolver.forVisionTasks("./vendor/mediapipe/wasm");
+    try {
+      handLandmarker = await mp.HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: "./models/hand_landmarker.task", delegate: "GPU" },
+        runningMode: "VIDEO",
+        numHands: 2,
+      });
+    } catch (e) {
+      console.warn("Hand GPU init failed, fallback to CPU", e);
+      handLandmarker = await mp.HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: "./models/hand_landmarker.task", delegate: "CPU" },
+        runningMode: "VIDEO",
+        numHands: 2,
+      });
+    }
+  } catch (e) {
+    console.error("Hand landmarker init failed", e);
+  } finally {
+    handLoading = false;
+  }
+}
+
+toggleHand.addEventListener("change", () => {
+  if (toggleHand.checked) ensureHands();
+});
+
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17],
+];
+
+function drawHand(lm) {
+  const W = canvas.width;
+  const H = canvas.height;
+  // 接続線
+  ctx.strokeStyle = "rgba(54,211,153,0.7)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (const [a, b] of HAND_CONNECTIONS) {
+    ctx.moveTo(fx(lm[a].x * W), lm[a].y * H);
+    ctx.lineTo(fx(lm[b].x * W), lm[b].y * H);
+  }
+  ctx.stroke();
+  // 21点
+  ctx.fillStyle = "rgba(54,211,153,0.9)";
+  for (const p of lm) {
+    ctx.beginPath();
+    ctx.arc(fx(p.x * W), p.y * H, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function classifyGesture(lm) {
+  // 指のtip/pip インデックス: [tip, pip]
+  const fingerPairs = [
+    [8, 6],   // 人差し指
+    [12, 10], // 中指
+    [16, 14], // 薬指
+    [20, 18], // 小指
+  ];
+  const extended = fingerPairs.map(([tip, pip]) => lm[tip].y < lm[pip].y - 0.02);
+  const [indexExt, middleExt, ringExt, pinkyExt] = extended;
+
+  const thumbExtended =
+    Math.hypot(lm[4].x - lm[2].x, lm[4].y - lm[2].y) >
+    Math.hypot(lm[3].x - lm[2].x, lm[3].y - lm[2].y) * 1.4;
+
+  const allFolded = !indexExt && !middleExt && !ringExt && !pinkyExt;
+  const allExtended = indexExt && middleExt && ringExt && pinkyExt;
+
+  // 判定（優先度順）
+  if (!indexExt && middleExt && !ringExt && !pinkyExt) {
+    return { label: "中指", emoji: "🖕" };
+  }
+  if (indexExt && middleExt && !ringExt && !pinkyExt) {
+    return { label: "ピース", emoji: "✌️" };
+  }
+  if (allExtended) {
+    return { label: "パー", emoji: "✋" };
+  }
+  if (allFolded && thumbExtended && lm[4].y < lm[0].y) {
+    return { label: "いいね", emoji: "👍" };
+  }
+  if (allFolded) {
+    return { label: "グー", emoji: "✊" };
+  }
+  if (indexExt && !middleExt && !ringExt && !pinkyExt) {
+    return { label: "指差し", emoji: "☝️" };
+  }
+  if (indexExt && !middleExt && !ringExt && pinkyExt) {
+    return { label: "ロック", emoji: "🤟" };
+  }
+  return { label: "…", emoji: "🖐" };
+}
+
+function drawHandGesture(lm, g) {
+  const W = canvas.width;
+  const H = canvas.height;
+  const x = fx(lm[9].x * W);
+  const y = lm[9].y * H;
+  const text = g.emoji + " " + g.label;
+  ctx.font = "15px -apple-system, sans-serif";
+  const padding = 5;
+  const w = ctx.measureText(text).width + padding * 2;
+  const h = 22;
+  const tx = x;
+  const ty = y - 30;
+  ctx.fillStyle = "rgba(30,30,60,0.75)";
+  ctx.fillRect(tx, ty, w, h);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, tx + padding, ty + 16);
 }
 
 // ---- 起動 ----
