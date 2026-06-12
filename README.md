@@ -2,6 +2,8 @@
 
 iPhone の Safari で動く、顔の骨格（ランドマーク）をリアルタイム検出し、表情を判定する Web アプリのデモです。すべてブラウザ内で完結し、映像はサーバーに送信されません。
 
+🔗 **公開URL: https://face-skeleton-expression-demo.vercel.app**
+
 ## 使用技術
 
 - **[MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker)**（Google製・オープンソース）
