@@ -1,7 +1,6 @@
 import {
   FaceLandmarker,
   FilesetResolver,
-  DrawingUtils,
 } from "./vendor/vision_bundle.mjs";
 
 // モジュールが実行開始したことをHTML側のウォッチドッグに通知
@@ -26,7 +25,6 @@ const togglePoints = document.getElementById("togglePoints");
 const toggleMirror = document.getElementById("toggleMirror");
 
 let faceLandmarker = null;
-let drawingUtils = null;
 let running = false;
 let lastVideoTime = -1;
 let lastFrameAt = 0;
@@ -94,7 +92,6 @@ async function initModel() {
       faceLandmarker = await createLandmarker(filesetResolver, "CPU");
     }
 
-    drawingUtils = new DrawingUtils(ctx);
     setStatus("準備完了", "ready");
     showHint("「カメラを起動」を押してください。カメラの許可が出たら「許可」を選択。");
     startBtn.disabled = false;
@@ -173,62 +170,60 @@ function renderLoop() {
   requestAnimationFrame(renderLoop);
 }
 
+// ---- 描画ヘルパー（DrawingUtilsに依存せず自前実装）----
+// connections: [{start, end}, ...] / landmarks: [{x, y}, ...]（正規化座標0..1）
+function drawConnectors(landmarks, connections, color, lineWidth) {
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (const c of connections) {
+    const a = landmarks[c.start];
+    const b = landmarks[c.end];
+    if (!a || !b) continue;
+    ctx.moveTo(a.x * w, a.y * h);
+    ctx.lineTo(b.x * w, b.y * h);
+  }
+  ctx.stroke();
+}
+
+function drawPoints(landmarks, fillColor, radius) {
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.fillStyle = fillColor;
+  for (const p of landmarks) {
+    ctx.beginPath();
+    ctx.arc(p.x * w, p.y * h, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 // ---- 骨格オーバーレイ描画 ----
 function drawSkeleton(landmarks) {
   const C = FaceLandmarker;
 
   // メッシュ（テッセレーション）
   if (toggleMesh.checked) {
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_TESSELATION, {
-      color: "rgba(120, 180, 255, 0.30)",
-      lineWidth: 1,
-    });
+    drawConnectors(landmarks, C.FACE_LANDMARKS_TESSELATION, "rgba(120, 180, 255, 0.30)", 1);
   }
 
   // 輪郭・目・眉・唇・虹彩
   if (toggleContours.checked) {
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_FACE_OVAL, {
-      color: "#4f8cff",
-      lineWidth: 3,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_EYE, {
-      color: "#36d399",
-      lineWidth: 2,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_EYE, {
-      color: "#36d399",
-      lineWidth: 2,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_EYEBROW, {
-      color: "#ffd166",
-      lineWidth: 2,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_EYEBROW, {
-      color: "#ffd166",
-      lineWidth: 2,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_LIPS, {
-      color: "#ff6b9d",
-      lineWidth: 2,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_IRIS, {
-      color: "#ffffff",
-      lineWidth: 2,
-    });
-    drawingUtils.drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_IRIS, {
-      color: "#ffffff",
-      lineWidth: 2,
-    });
+    drawConnectors(landmarks, C.FACE_LANDMARKS_FACE_OVAL, "#4f8cff", 3);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_EYE, "#36d399", 2);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_EYE, "#36d399", 2);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_EYEBROW, "#ffd166", 2);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_EYEBROW, "#ffd166", 2);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_LIPS, "#ff6b9d", 2);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_LEFT_IRIS, "#ffffff", 2);
+    drawConnectors(landmarks, C.FACE_LANDMARKS_RIGHT_IRIS, "#ffffff", 2);
   }
 
   // 全ランドマーク点
   if (togglePoints.checked) {
-    drawingUtils.drawLandmarks(landmarks, {
-      color: "rgba(255, 255, 255, 0.9)",
-      fillColor: "rgba(79, 140, 255, 0.9)",
-      radius: 1.4,
-      lineWidth: 0.5,
-    });
+    drawPoints(landmarks, "rgba(79, 140, 255, 0.9)", 1.6);
   }
 }
 
