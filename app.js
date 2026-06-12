@@ -14,6 +14,7 @@ const fpsEl = document.getElementById("fps");
 const switchCamBtn = document.getElementById("switchCamBtn");
 const registerBtn = document.getElementById("registerBtn");
 const toggleSkeleton = document.getElementById("toggleSkeleton");
+const toggleExpression = document.getElementById("toggleExpression");
 const dbCountEl = document.getElementById("dbCount");
 const manageBtn = document.getElementById("manageBtn");
 
@@ -79,6 +80,7 @@ async function initModel() {
     await faceapi.nets.faceLandmark68Net.loadFromUri(MODELS);
     await faceapi.nets.faceRecognitionNet.loadFromUri(MODELS);
     await faceapi.nets.ageGenderNet.loadFromUri(MODELS);
+    await faceapi.nets.faceExpressionNet.loadFromUri(MODELS);
     detectOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 256, scoreThreshold: 0.5 });
     db = loadDB();
     refreshDbCount();
@@ -93,10 +95,17 @@ async function initModel() {
 }
 
 // ---- カメラ ----
+// 内カメラは自撮りが自然に見えるよう video のみCSS反転。
+// canvasは反転せず、描画座標だけ反転する（テキストは反転させない＝読める）。
 function applyMirror() {
-  const t = facingMode === "user" ? "scaleX(-1)" : "scaleX(1)";
-  video.style.transform = t;
-  canvas.style.transform = t;
+  video.style.transform = facingMode === "user" ? "scaleX(-1)" : "scaleX(1)";
+  canvas.style.transform = "scaleX(1)";
+}
+function isMirror() {
+  return facingMode === "user";
+}
+function fx(x) {
+  return isMirror() ? canvas.width - x : x;
 }
 
 async function startCamera() {
@@ -151,6 +160,28 @@ function genderJP(g) {
   return g === "male" ? "男性" : g === "female" ? "女性" : "不明";
 }
 
+const EXPRESSION_MAP = {
+  neutral: "無表情😐",
+  happy: "笑顔😄",
+  sad: "悲しい😢",
+  angry: "怒り😠",
+  fearful: "驚き・不安😨",
+  disgusted: "嫌悪😖",
+  surprised: "驚き😲",
+};
+
+function getTopExpression(expressions) {
+  if (!expressions) return null;
+  let topKey = null;
+  let topScore = -1;
+  for (const [key, score] of Object.entries(expressions)) {
+    if (score > topScore) { topScore = score; topKey = key; }
+  }
+  if (!topKey) return null;
+  const label = EXPRESSION_MAP[topKey] || topKey;
+  return `${label} ${Math.round(topScore * 100)}%`;
+}
+
 // ---- 検出ループ ----
 async function detectLoop() {
   if (!running) return;
@@ -165,6 +196,7 @@ async function detectLoop() {
     detections = await faceapi
       .detectAllFaces(video, detectOptions)
       .withFaceLandmarks()
+      .withFaceExpressions()
       .withAgeAndGender()
       .withFaceDescriptors();
   } catch (e) {
@@ -183,11 +215,17 @@ async function detectLoop() {
     const detectedGender = genderJP(det.gender);
     const age = Math.round(det.age);
 
+    // 表情解析
+    const expr = toggleExpression.checked ? getTopExpression(det.expressions) : null;
+
     // オーバーレイ枠＋ラベル
     const known = m.matched;
     drawBox(box, known ? "#36d399" : "#ffb454");
     const label = known ? m.person.name : "未登録";
     drawLabel(box, label, known ? "#36d399" : "#ffb454");
+
+    // 表情ラベル（オーバーレイ）
+    if (expr) drawExpressionLabel(box, expr);
 
     // 骨格サブ機能
     if (toggleSkeleton.checked) drawSkeleton(det.landmarks);
@@ -197,11 +235,13 @@ async function detectLoop() {
       cards.push({
         known: true, name: m.person.name, gender: m.person.gender,
         sub: `${detectedGender}・推定${age}歳`, conf: Math.round((1 - m.dist / MATCH_THRESHOLD) * 100),
+        expr,
       });
     } else {
       cards.push({
         known: false, name: "未登録の人物", gender: detectedGender,
         sub: `推定${age}歳`, conf: 0,
+        expr,
       });
       const area = box.width * box.height;
       if (area > primaryArea) {
@@ -225,23 +265,36 @@ async function detectLoop() {
   requestAnimationFrame(detectLoop);
 }
 
-// ---- 描画 ----
+// ---- 描画（内カメラ時は座標をfx()で左右反転。テキストは反転しない）----
 function drawBox(box, color) {
+  const x = isMirror() ? canvas.width - box.x - box.width : box.x;
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
-  ctx.strokeRect(box.x, box.y, box.width, box.height);
+  ctx.strokeRect(x, box.y, box.width, box.height);
 }
 function drawLabel(box, text, color) {
   ctx.font = "bold 22px -apple-system, sans-serif";
   const padding = 6;
   const w = ctx.measureText(text).width + padding * 2;
   const h = 28;
-  const x = box.x;
+  const x = isMirror() ? canvas.width - box.x - box.width : box.x;
   const y = Math.max(0, box.y - h);
   ctx.fillStyle = color;
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = "#0b0f1a";
   ctx.fillText(text, x + padding, y + 21);
+}
+function drawExpressionLabel(box, text) {
+  ctx.font = "15px -apple-system, sans-serif";
+  const padding = 5;
+  const w = ctx.measureText(text).width + padding * 2;
+  const h = 22;
+  const x = isMirror() ? canvas.width - box.x - box.width : box.x;
+  const y = box.y + box.height + 2;
+  ctx.fillStyle = "rgba(30,30,60,0.75)";
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, x + padding, y + 16);
 }
 function drawSkeleton(landmarks) {
   const pts = landmarks.positions;
@@ -249,7 +302,7 @@ function drawSkeleton(landmarks) {
   ctx.fillStyle = "rgba(79,140,255,0.9)";
   for (const p of pts) {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 1.6, 0, Math.PI * 2);
+    ctx.arc(fx(p.x), p.y, 1.6, 0, Math.PI * 2);
     ctx.fill();
   }
   // 主要パーツの輪郭線
@@ -266,7 +319,7 @@ function drawSkeleton(landmarks) {
   ctx.lineWidth = 1.5;
   for (const g of groups) {
     ctx.beginPath();
-    g.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    g.forEach((p, i) => (i === 0 ? ctx.moveTo(fx(p.x), p.y) : ctx.lineTo(fx(p.x), p.y)));
     ctx.stroke();
   }
 }
@@ -281,7 +334,7 @@ function renderCards(cards) {
       <div class="person ${c.known ? "known" : "unknown"}">
         <div>
           <div class="pname">${escapeHtml(c.name)}</div>
-          <div class="pmeta">性別: ${escapeHtml(c.gender)} ／ ${escapeHtml(c.sub)}</div>
+          <div class="pmeta">性別: ${escapeHtml(c.gender)} ／ ${escapeHtml(c.sub)}${c.expr ? " ／ 表情: " + c.expr : ""}</div>
         </div>
         <span class="pbadge">${c.known ? "本人 " + c.conf + "%" : "未登録"}</span>
       </div>`)
