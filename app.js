@@ -41,28 +41,62 @@ function applyMirror() {
 toggleMirror.addEventListener("change", applyMirror);
 
 // ---- モデル読み込み ----
+const WASM_PATH = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm";
+const MODEL_PATH =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+function showHint(text) {
+  const hint = startScreen.querySelector(".hint");
+  if (hint) hint.textContent = text;
+}
+
+// 一定時間で解決しない場合に reject させる（GPUハング対策）
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} がタイムアウト(${ms}ms)`)), ms)
+    ),
+  ]);
+}
+
+async function createLandmarker(filesetResolver, delegate) {
+  return FaceLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: { modelAssetPath: MODEL_PATH, delegate },
+    outputFaceBlendshapes: true,
+    runningMode: "VIDEO",
+    numFaces: 1,
+  });
+}
+
 async function initModel() {
   try {
-    setStatus("モデル読み込み中…");
-    const filesetResolver = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm"
-    );
-    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-        delegate: "GPU",
-      },
-      outputFaceBlendshapes: true,
-      runningMode: "VIDEO",
-      numFaces: 1,
-    });
+    setStatus("WASM取得中…");
+    showHint("初回はモデルの読み込みに数秒かかります…");
+    const filesetResolver = await FilesetResolver.forVisionTasks(WASM_PATH);
+
+    setStatus("モデル取得中(GPU)…");
+    try {
+      // GPU は iOS Safari でハングすることがあるため、タイムアウトで打ち切って CPU に切替
+      faceLandmarker = await withTimeout(
+        createLandmarker(filesetResolver, "GPU"),
+        8000,
+        "GPU初期化"
+      );
+    } catch (gpuErr) {
+      console.warn("GPU初期化に失敗/タイムアウト。CPUで再試行します:", gpuErr);
+      setStatus("モデル取得中(CPU)…");
+      faceLandmarker = await createLandmarker(filesetResolver, "CPU");
+    }
+
     drawingUtils = new DrawingUtils(ctx);
     setStatus("準備完了", "ready");
+    showHint("「カメラを起動」を押してください。カメラの許可が出たら「許可」を選択。");
     startBtn.disabled = false;
   } catch (e) {
     console.error(e);
-    setStatus("モデル読み込み失敗", "error");
+    setStatus("読み込み失敗", "error");
+    showHint("読み込みに失敗しました: " + (e && e.message ? e.message : e) + "\nページを再読み込みしてください。");
   }
 }
 
