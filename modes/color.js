@@ -79,9 +79,12 @@ function pickColor(e, api) {
   const clientX = e.clientX;
   const clientY = e.clientY;
 
-  // オフスクリーン canvas に映像を描画
+  // videoWidth ガード
   const vw = api.video.videoWidth  || api.canvas.width;
   const vh = api.video.videoHeight || api.canvas.height;
+  if (!vw || !vh) return;
+
+  // オフスクリーン canvas に映像を描画
   if (!offCanvas) {
     offCanvas = document.createElement("canvas");
     offCtx    = offCanvas.getContext("2d");
@@ -134,37 +137,34 @@ function pickColor(e, api) {
  */
 function renderColor(api) {
   if (!picked) {
-    api.setResult(`<div style="padding:8px;color:#888;font-size:14px;">画面をタップして色を取得</div>`);
+    api.setResult(`<p class="result-empty">画面をタップして色を取得</p>`);
     return;
   }
   const { hex, rgb, name } = picked;
   const [r, g, b] = rgb;
   // スウォッチの文字色を輝度で白黒切り替え
   const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-  const textColor = luma > 140 ? "#222" : "#fff";
+  const swatchText = luma > 140 ? "#222" : "#fff";
 
   api.setResult(`
-    <div style="display:flex;flex-direction:column;gap:6px;padding:6px 8px;">
+    <div class="card-result" style="display:flex;flex-direction:column;gap:8px;">
       <div style="
         background:${hex};
         height:60px;
         border-radius:10px;
-        border:1px solid rgba(0,0,0,0.15);
+        border:0.5px solid var(--hairline);
         display:flex;align-items:center;justify-content:center;
-        font-size:13px;font-weight:bold;color:${textColor};letter-spacing:.05em;">
+        font-size:13px;font-weight:bold;color:${swatchText};letter-spacing:.05em;">
         ${hex}
       </div>
-      <div style="font-size:13px;line-height:1.8;">
-        <span style="font-weight:bold;">HEX:</span> ${hex}<br>
-        <span style="font-weight:bold;">RGB:</span> ${r}, ${g}, ${b}<br>
-        <span style="font-weight:bold;">色名:</span> ${name}
+      <div style="font-size:13px;line-height:1.8;color:var(--text);">
+        <span style="font-weight:bold;color:var(--text2);">HEX:</span> ${hex}<br>
+        <span style="font-weight:bold;color:var(--text2);">RGB:</span> ${r}, ${g}, ${b}<br>
+        <span style="font-weight:bold;color:var(--text2);">色名:</span> ${name}
       </div>
       <button
-        onclick="navigator.clipboard.writeText('${hex}').then(()=>{this.textContent='コピー済み✓';setTimeout(()=>{this.textContent='HEXコピー'},1500)})"
-        style="
-          padding:6px 14px;border:none;border-radius:6px;
-          background:#333;color:#fff;font-size:13px;cursor:pointer;
-          align-self:flex-start;">
+        class="ctrl-btn small"
+        onclick="navigator.clipboard.writeText('${hex}').then(()=>{this.textContent='コピー済み✓';setTimeout(()=>{this.textContent='HEXコピー'},1500)})">
         HEXコピー
       </button>
     </div>

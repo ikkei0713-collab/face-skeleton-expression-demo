@@ -104,7 +104,7 @@ html, body {
 .cr-label { font-size: 12px; color: var(--text2); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
 .cr-body { font-size: 17px; margin: 6px 0 12px; word-break: break-all; }
 .qr-link { color: var(--accent); text-decoration: none; }
-.ocr-pre { white-space: pre-wrap; word-break: break-word; font-size: 15px; max-height: 36svh; overflow: auto; margin: 6px 0 0; line-height: 1.6; }
+.ocr-pre { white-space: pre-wrap; word-break: break-word; font-size: 15px; max-height: 36svh; overflow: auto; margin: 6px 0 0; line-height: 1.6; color: var(--text); background: var(--bg); border: 0.5px solid var(--hairline); border-radius: 8px; padding: 10px; font-family: 'Hiragino Sans', 'Meiryo', monospace; }
 .count-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .count-chip { background: var(--bg); border: 0.5px solid var(--hairline); border-radius: 980px; padding: 6px 12px; font-size: 14px; font-weight: 600; }
 .count-total { font-size: 13px; color: var(--text2); margin-top: 10px; }

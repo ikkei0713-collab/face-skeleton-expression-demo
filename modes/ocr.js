@@ -6,6 +6,7 @@
 
 let worker = null;
 let loadPromise = null;
+let busy = false;
 
 export default {
   id: "ocr",
@@ -46,13 +47,18 @@ export default {
    * @param {object} api - シェルから渡される API オブジェクト
    */
   async onCapture(api) {
+    // 連打防止
+    if (busy) return;
+    busy = true;
     api.setBusy(true, "解析中…");
 
     try {
-      // ---- オフスクリーン canvas に現フレームを描画 ----
+      // ---- videoWidth ガード ----
       const vw = api.video.videoWidth;
       const vh = api.video.videoHeight;
+      if (!vw || !vh) return;
 
+      // ---- オフスクリーン canvas に現フレームを描画 ----
       const offscreen = document.createElement("canvas");
       offscreen.width  = vw;
       offscreen.height = vh;
@@ -69,6 +75,7 @@ export default {
       const confidence = Math.round(data.confidence ?? 0);
 
       // ---- オーバーレイに認識枠を描画（任意: 単語レベル bbox）----
+      api.ctx.save();
       api.ctx.clearRect(0, 0, api.canvas.width, api.canvas.height);
       if (data.words && data.words.length > 0) {
         api.ctx.strokeStyle = "rgba(0,200,255,0.85)";
@@ -87,10 +94,11 @@ export default {
           );
         }
       }
+      api.ctx.restore();
 
       // ---- 結果パネル表示 ----
       if (text.length === 0) {
-        api.setResult(`<p style="color:#aaa;text-align:center;padding:8px">文字を検出できませんでした</p>`);
+        api.setResult(`<p class="result-empty">文字を検出できませんでした</p>`);
       } else {
         const escaped = text
           .replace(/&/g, "&amp;")
@@ -98,35 +106,23 @@ export default {
           .replace(/>/g, "&gt;");
 
         api.setResult(`
-          <div style="padding:6px 8px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-              <span style="font-size:11px;color:#888">OCR 結果</span>
-              <span style="font-size:11px;background:rgba(0,200,255,.2);color:#0cf;border-radius:4px;padding:2px 6px">
+          <div class="card-result">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span class="cr-label">OCR 結果</span>
+              <span style="font-size:11px;color:var(--accent);background:rgba(10,132,255,.15);border-radius:4px;padding:2px 6px">
                 信頼度 ${confidence}%
               </span>
             </div>
-            <pre style="
-              margin:0;
-              white-space:pre-wrap;
-              word-break:break-all;
-              font-size:13px;
-              line-height:1.6;
-              max-height:220px;
-              overflow-y:auto;
-              background:rgba(255,255,255,.06);
-              border-radius:6px;
-              padding:8px;
-              color:#eee;
-              font-family:'Hiragino Sans','Meiryo',monospace;
-            ">${escaped}</pre>
+            <pre class="ocr-pre">${escaped}</pre>
           </div>
         `);
       }
     } catch (err) {
       console.error("[OCR] recognize error:", err);
-      api.setResult(`<p style="color:#f88;padding:8px">認識エラー: ${err && err.message ? err.message : err}</p>`);
+      api.setResult(`<p style="color:var(--danger);padding:8px">認識エラー: ${err && err.message ? err.message : err}</p>`);
     } finally {
       api.setBusy(false);
+      busy = false;
     }
   },
 
@@ -134,6 +130,7 @@ export default {
    * モード停止時のクリーンアップ（worker は次回のため保持する）。
    */
   onStop() {
+    busy = false;
     // worker は load() で一度初期化したら保持し続ける（再初期化コスト削減）。
     // 明示的に終了したい場合は worker.terminate() を呼ぶ。
   },

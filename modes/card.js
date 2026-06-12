@@ -7,6 +7,7 @@
 let worker = null;
 let loadPromise = null;
 let rows = [];
+let busy = false;
 
 // ---- 都道府県リスト ----
 const PREFECTURES =
@@ -181,11 +182,7 @@ function buildCSV() {
 // ---- 結果パネル描画 ----
 function renderCSV(api) {
   if (rows.length === 0) {
-    api.setResult(`
-      <div style="padding:12px 8px;text-align:center;color:#aaa;font-size:13px">
-        シャッターで名刺を撮影してください
-      </div>
-    `);
+    api.setResult(`<p class="result-empty">シャッターで名刺を撮影してください</p>`);
     return;
   }
 
@@ -196,38 +193,16 @@ function renderCSV(api) {
     .replace(/>/g, "&gt;");
 
   api.setResult(`
-    <div style="padding:6px 8px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:4px">
-        <span style="font-size:12px;color:#0cf;font-weight:bold">${rows.length}枚 読取済み</span>
+    <div class="card-result">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px">
+        <span style="font-size:12px;color:var(--accent);font-weight:bold">${rows.length}枚 読取済み</span>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button id="cardCopyBtn" style="
-            font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid #0cf;
-            background:rgba(0,200,255,.15);color:#0cf;cursor:pointer;
-          ">コピー</button>
-          <button id="cardUndoBtn" style="
-            font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid #fa0;
-            background:rgba(255,170,0,.15);color:#fa0;cursor:pointer;
-          ">1件取消</button>
-          <button id="cardClearBtn" style="
-            font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid #f55;
-            background:rgba(255,85,85,.15);color:#f55;cursor:pointer;
-          ">全消去</button>
+          <button id="cardCopyBtn" class="ctrl-btn small">コピー</button>
+          <button id="cardUndoBtn" class="ctrl-btn small" style="color:var(--warn);border-color:var(--warn)">1件取消</button>
+          <button id="cardClearBtn" class="ctrl-btn small" style="color:var(--danger);border-color:var(--danger)">全消去</button>
         </div>
       </div>
-      <pre class="ocr-pre" id="cardCsv" style="
-        margin:0;
-        white-space:pre;
-        overflow-x:auto;
-        font-size:11px;
-        line-height:1.6;
-        max-height:220px;
-        overflow-y:auto;
-        background:rgba(255,255,255,.06);
-        border-radius:6px;
-        padding:8px;
-        color:#eee;
-        font-family:'Hiragino Sans','Meiryo',monospace;
-      ">${escaped}</pre>
+      <pre class="ocr-pre" id="cardCsv" style="white-space:pre;overflow-x:auto;font-size:11px;">${escaped}</pre>
     </div>
   `);
 
@@ -295,13 +270,18 @@ export default {
    * シャッター押下時: 現フレームをOCRして名刺情報を抽出・蓄積する。
    */
   async onCapture(api) {
+    // 連打防止
+    if (busy) return;
+    busy = true;
     api.setBusy(true, "名刺を解析中…");
 
     try {
-      // ---- オフスクリーン canvas に現フレームを描画 ----
+      // ---- videoWidth ガード ----
       const vw = api.video.videoWidth;
       const vh = api.video.videoHeight;
+      if (!vw || !vh) return;
 
+      // ---- オフスクリーン canvas に現フレームを描画 ----
       const offscreen = document.createElement("canvas");
       offscreen.width = vw;
       offscreen.height = vh;
@@ -321,16 +301,18 @@ export default {
     } catch (err) {
       console.error("[card] recognize error:", err);
       api.setResult(
-        `<p style="color:#f88;padding:8px">認識エラー: ${
+        `<p style="color:var(--danger);padding:8px">認識エラー: ${
           err && err.message ? err.message : String(err)
         }</p>`
       );
     } finally {
       api.setBusy(false);
+      busy = false;
     }
   },
 
   onStop() {
+    busy = false;
     // worker は保持し続ける（再初期化コスト削減）
   },
 };

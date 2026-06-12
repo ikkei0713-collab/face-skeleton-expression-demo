@@ -172,6 +172,8 @@ export default {
       // ミラー反転時は枠のx座標を補正（枠左端を反転）
       const drawX = isMirror ? canvasWidth - bx - bw : bx;
 
+      ctx.save();
+
       // 枠描画（水色系）
       ctx.strokeStyle = "#00d4ff";
       ctx.lineWidth = 2.5;
@@ -194,6 +196,8 @@ export default {
       ctx.fillStyle = "#000000";
       ctx.textBaseline = "top";
       ctx.fillText(displayText, labelX + padding, labelBgY + padding);
+
+      ctx.restore();
     }
 
     // クラスごとのカウント集計
@@ -208,10 +212,17 @@ export default {
     const total = lastDetections.length;
 
     if (sorted.length === 0) {
-      api.setResult(`<span style="color:#888">物体を検出中…</span>`);
+      api.setResult(`<span class="result-empty" style="display:block">物体を検出中…</span>`);
     } else {
-      const items = sorted.map(([name, cnt]) => `<b>${name}</b> ×${cnt}`).join(" ／ ");
-      api.setResult(`${items}<br><small style="color:#aaa">合計: ${total} 個</small>`);
+      const chips = sorted
+        .map(([name, cnt]) => `<span class="count-chip">${name} ×${cnt}</span>`)
+        .join("");
+      api.setResult(`
+        <div class="card-result">
+          <div class="count-list">${chips}</div>
+          <div class="count-total">合計: ${total} 個</div>
+        </div>
+      `);
     }
   },
 
