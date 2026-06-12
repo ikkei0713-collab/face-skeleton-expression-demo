@@ -21,6 +21,7 @@ let currentStream = null;
 let active = null;        // 現在のモードオブジェクト
 let activeId = null;
 let frameBusy = false;
+let frameBusyAt = 0;
 
 // モード定義（遅延import）
 const MODE_DEFS = [
@@ -30,6 +31,7 @@ const MODE_DEFS = [
   { id: "detect", icon: "📦", label: "物体", loader: () => import("./modes/detect.js") },
   { id: "card", icon: "📇", label: "名刺", loader: () => import("./modes/card.js") },
   { id: "color", icon: "🎨", label: "カラー", loader: () => import("./modes/color.js") },
+  { id: "pose", icon: "🧍", label: "姿勢", loader: () => import("./modes/pose.js") },
 ];
 const moduleCache = {};
 
@@ -74,6 +76,8 @@ async function startCamera() {
     startScreen.style.display = "none";
     applyMirror();
     setStatus(active ? active.label : "準備完了", "ready");
+    // カメラ切替で前フレームの検出awaitが宙吊りになりループが固まるのを防ぐ
+    frameBusy = false;
     if (!running) { running = true; loop(); }
   } catch (e) {
     console.error(e);
@@ -160,8 +164,12 @@ async function loop() {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
   }
+  // ウォッチドッグ: 検出awaitが宙吊り（カメラ切替等）でも3秒で復帰
+  if (frameBusy && performance.now() - frameBusyAt > 3000) frameBusy = false;
+
   if (active && active.mode === "continuous" && active.onFrame && !frameBusy) {
     frameBusy = true;
+    frameBusyAt = performance.now();
     // selfClear モードは検出後に自前でクリア（非同期検出中の点滅を防ぐ）
     if (!active.selfClear) ctx.clearRect(0, 0, canvas.width, canvas.height);
     try { await active.onFrame(api); } catch (e) { console.warn("frame", e); }
