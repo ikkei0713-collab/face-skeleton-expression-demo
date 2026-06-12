@@ -212,6 +212,7 @@ export default {
   label: "人物",
   icon: "🙂",
   mode: "continuous",
+  selfClear: true, // 検出後に自前でクリア（点滅防止）
 
   async load(api) {
     if (loaded) return;
@@ -238,6 +239,9 @@ export default {
         .detectAllFaces(api.video, detectOptions)
         .withFaceLandmarks().withFaceExpressions().withAgeAndGender().withFaceDescriptors();
     } catch (e) { console.warn("face detect", e); }
+
+    // 検出が終わってから一括クリア→描画（点滅させない）
+    api.clear();
 
     const cards = [];
     let primaryUnknown = null, primaryArea = 0;

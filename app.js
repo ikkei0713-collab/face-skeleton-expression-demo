@@ -52,6 +52,7 @@ function fx(x) { return isMirror() ? canvas.width - x : x; }
 // モードへ渡すAPI
 const api = {
   video, canvas, ctx, fx, isMirror,
+  clear() { ctx.clearRect(0, 0, canvas.width, canvas.height); },
   setResult(html) { resultEl.innerHTML = html; },
   setBusy(on, msg) { busyEl.hidden = !on; if (msg) busyMsg.textContent = msg; },
 };
@@ -161,7 +162,8 @@ async function loop() {
   }
   if (active && active.mode === "continuous" && active.onFrame && !frameBusy) {
     frameBusy = true;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // selfClear モードは検出後に自前でクリア（非同期検出中の点滅を防ぐ）
+    if (!active.selfClear) ctx.clearRect(0, 0, canvas.width, canvas.height);
     try { await active.onFrame(api); } catch (e) { console.warn("frame", e); }
     frameBusy = false;
   }
