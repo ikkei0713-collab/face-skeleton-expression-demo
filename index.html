@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="顔認証" />
-  <meta name="theme-color" content="#0b0f1a" />
-  <title>顔認証デモ</title>
+  <meta name="apple-mobile-web-app-title" content="ビジョン" />
+  <meta name="theme-color" content="#000000" />
+  <title>ビジョン認識</title>
   <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -16,7 +16,7 @@
 <body>
   <div id="app">
     <header id="topbar">
-      <h1>顔認証</h1>
+      <h1 id="modeTitle">ビジョン認識</h1>
       <span id="status" class="status">モデル読み込み中…</span>
     </header>
 
@@ -24,52 +24,50 @@
       <video id="video" playsinline autoplay muted></video>
       <canvas id="overlay"></canvas>
 
+      <button id="switchCamBtn" class="fab" title="カメラ切替">🔄</button>
+      <button id="shutterBtn" class="fab" hidden title="撮影"></button>
+      <div id="busy" hidden><span class="spinner"></span><span id="busyMsg">読み込み中…</span></div>
+
       <div id="startScreen" class="overlay-screen">
         <button id="startBtn" disabled>カメラを起動</button>
-        <p class="hint">iPhone の Safari で開いてください。<br />カメラの許可を求められたら「許可」を選択。</p>
+        <p class="hint">iPhone の Safari で開いてください。
+カメラの許可を求められたら「許可」を選択。</p>
       </div>
     </div>
 
     <div id="panel">
       <div id="result" class="result">
-        <div class="result-empty">顔を映してください…</div>
+        <div class="result-empty">モードを選んでください…</div>
       </div>
 
-      <div id="controls">
-        <button id="switchCamBtn" class="ctrl-btn">📷 カメラ切替</button>
+      <!-- 人物モードのコントロール -->
+      <div id="controls-face" class="controls">
         <button id="registerBtn" class="ctrl-btn" disabled>＋ この人を登録</button>
-        <label class="toggle"><input type="checkbox" id="toggleSkeleton" /> 骨格表示</label>
-        <label class="toggle"><input type="checkbox" id="toggleExpression" /> 表情解析</label>
-        <label class="toggle"><input type="checkbox" id="toggleHand" /> 手の認識</label>
+        <label class="toggle"><input type="checkbox" id="toggleSkeleton" /> 骨格</label>
+        <label class="toggle"><input type="checkbox" id="toggleExpression" /> 表情</label>
+        <label class="toggle"><input type="checkbox" id="toggleHand" /> 手</label>
+        <div class="db-info">
+          <span id="dbCount">登録: 0人</span>
+          <button id="manageBtn" class="link-btn">登録一覧</button>
+        </div>
       </div>
-
-      <div id="dbInfo" class="db-info">
-        <span id="dbCount">登録: 0人</span>
-        <button id="manageBtn" class="link-btn">登録一覧</button>
-      </div>
-      <div id="fps" class="fps"></div>
     </div>
   </div>
+
+  <!-- タブバー -->
+  <nav id="tabbar"></nav>
 
   <!-- 登録モーダル -->
   <div id="registerModal" class="modal" hidden>
     <div class="modal-card">
       <h2>人物を登録</h2>
       <div class="modal-preview"><canvas id="regPreview" width="120" height="120"></canvas></div>
-      <label class="field">
-        <span>氏名</span>
-        <input id="regName" type="text" placeholder="例: 山田 太郎" />
-      </label>
-      <label class="field">
-        <span>性別</span>
-        <select id="regGender">
-          <option value="男性">男性</option>
-          <option value="女性">女性</option>
-          <option value="その他">その他</option>
-        </select>
+      <label class="field"><span>氏名</span><input id="regName" type="text" placeholder="例: 山田 太郎" /></label>
+      <label class="field"><span>性別</span>
+        <select id="regGender"><option value="男性">男性</option><option value="女性">女性</option><option value="その他">その他</option></select>
       </label>
       <div class="modal-actions">
-        <button id="regCancel" class="ctrl-btn ghost">キャンセル</button>
+        <button id="regCancel" class="ctrl-btn">キャンセル</button>
         <button id="regSave" class="ctrl-btn primary">保存</button>
       </div>
     </div>
@@ -80,13 +78,10 @@
     <div class="modal-card">
       <h2>登録一覧</h2>
       <div id="manageList" class="manage-list"></div>
-      <div class="modal-actions">
-        <button id="manageClose" class="ctrl-btn ghost">閉じる</button>
-      </div>
+      <div class="modal-actions"><button id="manageClose" class="ctrl-btn">閉じる</button></div>
     </div>
   </div>
 
-  <!-- 監視スクリプト（非module: 読込失敗時も必ず動く）-->
   <script>
     (function () {
       var statusEl = document.getElementById("status");
@@ -96,19 +91,13 @@
         if (hintEl) { hintEl.textContent = "エラー: " + msg; }
       }
       window.addEventListener("error", function (e) { showError(e && e.message ? e.message : "不明なエラー"); });
-      window.addEventListener("unhandledrejection", function (e) {
-        var r = e && e.reason; showError(r && r.message ? r.message : String(r));
-      });
+      window.addEventListener("unhandledrejection", function (e) { var r = e && e.reason; showError(r && r.message ? r.message : String(r)); });
       setTimeout(function () {
         if (window.__APP_READY || window.__APP_ERROR) return;
-        if (!window.__APP_MODULE_LOADED) {
-          showError("スクリプトを読み込めませんでした。再読み込みしてください。");
-        } else if (hintEl && statusEl && /読み込み|取得/.test(statusEl.textContent)) {
-          hintEl.textContent = "読み込みに時間がかかっています…（初回はモデル取得があります）電波の良い場所で再読み込みしてください。";
-        }
+        if (!window.__APP_MODULE_LOADED) showError("スクリプトを読み込めませんでした。再読み込みしてください。");
       }, 25000);
     })();
   </script>
-  <script type="module" src="./app.js?v=3"></script>
+  <script type="module" src="./app.js?v=4"></script>
 </body>
 </html>
